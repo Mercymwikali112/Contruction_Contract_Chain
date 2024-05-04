@@ -95,15 +95,46 @@ module construction_contract_chain::construction_contract_chain {
 
     // Public - Entry functions
 
+    public fun new_worker(project: ID, description_: String, ctx: &mut TxContext) : Worker {
+        let worker = Worker {
+            id: object::new(ctx),
+            project_id: project,
+            contractor: sender(ctx),
+            description: description_,
+            skills: vector::empty()
+        };
+        worker
+    }
+
+    public entry fun bid_work(project: &mut ConstructionJob, worker: Worker, ctx: &mut TxContext) {
+        assert!(!project.status, ERROR_PROJECT_CLOSED);
+        assert!(check_worker_skills(&worker.skills, &project.required_skills), ERROR_INVALID_SKILL);
+        table::add(&mut project.workers, sender(ctx), worker);
+    }
+
+    public fun choose_worker(cap: &ConstructionJobCap, project: &mut ConstructionJob, coin: Coin<SUI>, chosen: address, ctx: &mut TxContext) : Worker {
+        assert!(cap.project_id == object::id(project), ERROR_INVALID_CAP);
+        assert!(coin::value(&coin) >= project.budget, ERROR_INSUFFICIENT_FUNDS);
+
+        let worker = table::remove(&mut project.workers, chosen);
+        let payment = coin::into_balance(coin);
+        balance::join(&mut project.payment, payment);
+        project.status = true;
+        project.worker = some(chosen);
+
+        worker
+    }
+
     // Create a new construction project
     public entry fun new_project(
-        c: &Clock, 
+        c: &Clock,
         description_: String,
         project_type_: String,
-        budget_: u64, 
-        duration_: u64, 
+        budget_: u64,
+        duration_: u64,
+        required_skills: vector<String>,
         ctx: &mut TxContext
-        ) {
+    ) {
         let id_ = object::new(ctx);
         let inner_ = object::uid_to_inner(&id_);
         let deadline_ = timestamp_ms(c) + duration_;
@@ -114,7 +145,7 @@ module construction_contract_chain::construction_contract_chain {
             contractor: sender(ctx),
             workers: table::new(ctx),
             description: description_,
-            required_skills: vector::empty(),
+            required_skills: required_skills,
             project_type: project_type_,
             budget: budget_,
             payment: balance::zero(),
@@ -151,34 +182,22 @@ module construction_contract_chain::construction_contract_chain {
         table::add(&mut project.workers, sender(ctx), worker);
     }
 
-    public fun choose_worker(cap: &ConstructionJobCap, project: &mut ConstructionJob, coin: Coin<SUI>, chosen: address) : Worker {
-        assert!(cap.project_id == object::id(project), ERROR_INVALID_CAP);
-        assert!(coin::value(&coin) >= project.budget, ERROR_INSUFFICIENT_FUNDS);
-
-        let worker = table::remove(&mut project.workers, chosen);
-        let payment = coin::into_balance(coin);
-        balance::join(&mut project.payment, payment);
-        project.status = true;
-        project.worker = some(chosen);
-
-        worker
-    }
-
-    public fun submit_work(project: &mut ConstructionJob, c: &Clock, ctx: &mut TxContext) {
+    public entry fun submit_work(project: &mut ConstructionJob, c: &Clock, ctx: &mut TxContext) {
         assert!(timestamp_ms(c) < project.deadline, ERROR_TIME_IS_UP);
         assert!(*borrow(&project.worker) == sender(ctx), ERROR_WRONG_ADDRESS);
         project.work_submitted = true;
     }
 
-    public fun confirm_work(cap: &ConstructionJobCap, project: &mut ConstructionJob, ctx: &mut TxContext) {
+    public entry fun confirm_work(cap: &ConstructionJobCap, project: &mut ConstructionJob, ctx: &mut TxContext) {
         assert!(cap.project_id == object::id(project), ERROR_INVALID_CAP);
         assert!(project.work_submitted, ERROR_WORK_NOT_SUBMITTED);
 
         let payment = balance::withdraw_all(&mut project.payment);
         let coin = coin::from_balance(payment, ctx);
-        
+
         transfer::public_transfer(coin, *borrow(&project.worker));
     }
+
 
     // Additional functions for handling complaints and dispute resolutions
     public fun file_complaint(project: &mut ConstructionJob, c:&Clock, reason: String, ctx: &mut TxContext) {
@@ -228,9 +247,36 @@ module construction_contract_chain::construction_contract_chain {
     }
 
     // Helper function to add skills to a worker
-    public fun add_skills(worker: &mut Worker, skills: String) {
-        assert!(!vector::contains(&worker.skills, &skills), ERROR_INVALID_SKILL);
-        vector::push_back(&mut worker.skills, skills);
+    public fun add_skill(worker: &mut Worker, skill: String) {
+        assert!(!vector::contains(&worker.skills, &skill), ERROR_INVALID_SKILL);
+        vector::push_back(&mut worker.skills, skill);
+    }
+
+    // Check if a worker has the required skills
+    public fun check_worker_skills(worker_skills: &vector<String>, required_skills: &vector<String>): bool {
+        let has_skills = true;
+        let i = 0;
+        while (i < vector::length(required_skills)) {
+            let skill = vector::borrow(required_skills, i);
+            if (!vector::contains(worker_skills, skill)) {
+                has_skills = false;
+                break;
+            };
+            i = i + 1;
+        };
+        has_skills
+    }
+
+    // Rate a worker after project completion
+    public entry fun rate_worker(project: &mut ConstructionJob, rating: u64, ctx: &mut TxContext) {
+        assert!(project.contractor == sender(ctx), ERROR_WRONG_ADDRESS);
+        assert!(project.work_submitted && !project.dispute, ERROR_WORK_NOT_SUBMITTED);
+        project.rating = some(rating);
+    }
+
+    // Get the rating of a worker
+    public fun get_worker_rating(project: &ConstructionJob): Option<u64> {
+        project.rating
     }
 }
 
