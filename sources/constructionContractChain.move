@@ -2,17 +2,16 @@ module construction_contract_chain::construction_contract_chain {
 
     // Imports
     use sui::transfer;
-    use sui::sui::SUI;
-    use sui::coin::{Self, Coin};
+    use sui::coin::{Self as Coin, Coin};
     use sui::clock::{Clock, timestamp_ms};
-    use sui::object::{Self, UID, ID};
-    use sui::balance::{Self, Balance};
+    use sui::object::{Self as Object, UID, ID, owner};
+    use sui::balance::{Self as Balance, Balance};
     use sui::tx_context::{TxContext, sender};
-    use sui::table::{Self, Table};
+    use sui::table::{Self as Table, Table};
 
     use std::option::{Option, none, some, borrow};
-    use std::string::{String};
-    use std::vector::{Self};
+    use std::string::String;
+    use std::vector::{Self as Vector};
 
     // Errors
     const ERROR_INVALID_SKILL: u64 = 0;
@@ -28,13 +27,13 @@ module construction_contract_chain::construction_contract_chain {
     // Struct definitions
     
     // ConstructionJob Struct
-    struct ConstructionJob has key, store {
+    struct ConstructionJob {
         id: UID,
         inner: ID,
         contractor: address,
         workers: Table<address, Worker>,
         description: String,
-        required_skills: vector<String>,
+        required_skills: Vector<String>,
         project_type: String,
         budget: u64,
         payment: Balance<SUI>,
@@ -47,22 +46,22 @@ module construction_contract_chain::construction_contract_chain {
         deadline: u64,
     }
     
-    struct ConstructionJobCap has key {
+    struct ConstructionJobCap {
         id: UID,
         project_id: ID
     }
     
     // Worker Struct
-    struct Worker has key, store {
+    struct Worker {
         id: UID,
         project_id: ID,
         contractor: address,
         description: String,
-        skills: vector<String>
+        skills: Vector<String>
     }
     
     // Complaint Struct
-    struct Complaint has key, store {
+    struct Complaint {
         id: UID,
         worker: address,
         contractor: address,
@@ -70,10 +69,10 @@ module construction_contract_chain::construction_contract_chain {
         decision: bool,
     }
 
-    struct AdminCap has key {id: UID}
+    struct AdminCap { id: UID }
 
     fun init(ctx: &mut TxContext) {
-        transfer::transfer(AdminCap{id: object::new(ctx)}, sender(ctx));
+        transfer::transfer(AdminCap { id: Object::new(ctx) }, sender(ctx));
     }
 
     // Accessors
@@ -104,20 +103,20 @@ module construction_contract_chain::construction_contract_chain {
         duration_: u64, 
         ctx: &mut TxContext
         ) {
-        let id_ = object::new(ctx);
-        let inner_ = object::uid_to_inner(&id_);
+        let id_ = Object::new(ctx);
+        let inner_ = Object::uid_to_inner(&id_);
         let deadline_ = timestamp_ms(c) + duration_;
 
         transfer::share_object(ConstructionJob {
             id: id_,
             inner: inner_,
             contractor: sender(ctx),
-            workers: table::new(ctx),
+            workers: Table::new(ctx),
             description: description_,
-            required_skills: vector::empty(),
+            required_skills: Vector::empty(),
             project_type: project_type_,
             budget: budget_,
-            payment: balance::zero(),
+            payment: Balance::zero(),
             dispute: false,
             rating: none(),
             status: false,
@@ -127,37 +126,37 @@ module construction_contract_chain::construction_contract_chain {
             deadline: deadline_
         });
 
-        transfer::transfer(ConstructionJobCap{id: object::new(ctx), project_id: inner_}, sender(ctx));
+        transfer::transfer(ConstructionJobCap { id: Object::new(ctx), project_id: inner_ }, sender(ctx));
     }
     
     public fun new_worker(project: ID, description_: String, ctx: &mut TxContext) : Worker {
         let worker = Worker {
-            id: object::new(ctx),
+            id: Object::new(ctx),
             project_id: project,
             contractor: sender(ctx),
             description: description_,
-            skills: vector::empty()
+            skills: Vector::empty()
         };
         worker
     }
 
     public fun add_skill(worker: &mut Worker, skill: String) {
-        assert!(!vector::contains(&worker.skills, &skill), ERROR_INVALID_SKILL);
-        vector::push_back(&mut worker.skills, skill);
+        assert!(!Vector::contains(&worker.skills, &skill), ERROR_INVALID_SKILL);
+        Vector::push_back(&mut worker.skills, skill);
     }
 
     public fun bid_work(project: &mut ConstructionJob, worker: Worker, ctx: &mut TxContext) {
         assert!(!project.status, ERROR_PROJECT_CLOSED);
-        table::add(&mut project.workers, sender(ctx), worker);
+        Table::add(&mut project.workers, sender(ctx), worker);
     }
 
     public fun choose_worker(cap: &ConstructionJobCap, project: &mut ConstructionJob, coin: Coin<SUI>, chosen: address) : Worker {
-        assert!(cap.project_id == object::id(project), ERROR_INVALID_CAP);
+        assert!(cap.project_id == Object::id(project), ERROR_INVALID_CAP);
         assert!(coin::value(&coin) >= project.budget, ERROR_INSUFFICIENT_FUNDS);
 
-        let worker = table::remove(&mut project.workers, chosen);
+        let worker = Table::remove(&mut project.workers, chosen);
         let payment = coin::into_balance(coin);
-        balance::join(&mut project.payment, payment);
+        Balance::join(&mut project.payment, payment);
         project.status = true;
         project.worker = some(chosen);
 
@@ -171,10 +170,10 @@ module construction_contract_chain::construction_contract_chain {
     }
 
     public fun confirm_work(cap: &ConstructionJobCap, project: &mut ConstructionJob, ctx: &mut TxContext) {
-        assert!(cap.project_id == object::id(project), ERROR_INVALID_CAP);
+        assert!(cap.project_id == Object::id(project), ERROR_INVALID_CAP);
         assert!(project.work_submitted, ERROR_WORK_NOT_SUBMITTED);
 
-        let payment = balance::withdraw_all(&mut project.payment);
+        let payment = Balance::withdraw_all(&mut project.payment);
         let coin = coin::from_balance(payment, ctx);
         
         transfer::public_transfer(coin, *borrow(&project.worker));
@@ -192,7 +191,7 @@ module construction_contract_chain::construction_contract_chain {
 
         // Create the complaint
         let complaint = Complaint{
-            id: object::new(ctx),
+            id: Object::new(ctx),
             worker: complainer,
             contractor: contractor,
             reason: reason,
@@ -212,12 +211,12 @@ module construction_contract_chain::construction_contract_chain {
         // Decision process
         if (decision) {
             // If decision is true, transfer the escrow to the worker
-            let payment = balance::withdraw_all(&mut project.payment);
+            let payment = Balance::withdraw_all(&mut project.payment);
             let coin = coin::from_balance(payment, ctx);
             transfer::public_transfer(coin, complaint.worker);
         } else {
             // If decision is false, return the escrow to the contractor
-            let payment = balance::withdraw_all(&mut project.payment);
+            let payment = Balance::withdraw_all(&mut project.payment);
             let coin = coin::from_balance(payment, ctx);
             transfer::public_transfer(coin, project.contractor);
             
@@ -229,8 +228,7 @@ module construction_contract_chain::construction_contract_chain {
 
     // Helper function to add skills to a worker
     public fun add_skills(worker: &mut Worker, skills: String) {
-        assert!(!vector::contains(&worker.skills, &skills), ERROR_INVALID_SKILL);
-        vector::push_back(&mut worker.skills, skills);
+        assert!(!Vector::contains(&worker.skills, &skills), ERROR_INVALID_SKILL);
+        Vector::push_back(&mut worker.skills, skills);
     }
 }
-
